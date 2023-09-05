@@ -11,18 +11,22 @@ jobs:
         type: string
       test-suite-path:
         type: string
+      bb-version:
+        type: string
     machine:
       image: ubuntu-2004:current
       docker_layer_caching: true
     steps:
-      - checkout
+      - run:
+          name: Checkout Specific Version
+          command: git checkout << parameters.bb-version >>
       - run:
           name: Execute tests
           command: |
             echo "# Execute application test_entrypoint.sh in background."
             # Execute application test_entrypoint.sh in background.
             chmod u+x << parameters.example-app-path >>/test_entrypoint.sh
-            cd << parameters.example-app-path >> && ./test_entrypoint.sh
+            cd << parameters.example-app-path >> && ./test_entrypoint.sh << parameters.bb-version >>
 
             # Check for testCustomParameters.json
             if [ -f << parameters.example-app-path >>/testCustomParameters.json ]; then
@@ -46,7 +50,7 @@ jobs:
             fi
 
       - store_test_results:
-          path: << parameters.test-suite-path >>/result
+          path: << parameters.test-suite-path >>/result/<< parameters.bb-version >>_example_result.message
       - checkout
       - run:
           name: Export test results
@@ -61,7 +65,7 @@ jobs:
 
             if [[ -z "${TEST_RESULTS_STORAGE_API_KEY}" ]]; then
               echo "No Test Result Storage API Key detected."
-              echo "Please set the TEST_RESULTS_STORAGE_API_KEY environment variable."
+              echo "Please set the TEST_RESULTS_STORAGE_API_KEY environment variable. test mess"
               echo "Aborting test result export."
               exit 1
             fi
@@ -77,6 +81,7 @@ jobs:
               # Meta file is not mandatory but curl will return 26 code if it's missing.
               curl -v -F buildingBlock=${CIRCLE_PROJECT_REPONAME} \
                 -F report=@${TEST_RESULT_REPORT_PATH}             \
+                -F version=<< parameters.bb-version >>            \  # Adding tag as version
                 -F META=@${TEST_PRODUCT_META_PATH}                \
                 -F testSuite=<< parameters.test-suite-name >>     \
                 -F testApp=<< parameters.example-app-name >>      \
@@ -86,6 +91,7 @@ jobs:
             else
               curl -v -F buildingBlock=${CIRCLE_PROJECT_REPONAME} \
                 -F report=@${TEST_RESULT_REPORT_PATH}             \
+                -F version=<< parameters.bb-version >>            \  # Adding tag as version
                 -F testSuite=<< parameters.test-suite-name >>     \
                 -F testApp=<< parameters.example-app-name >>      \
                 -F sourceBranch=${CIRCLE_BRANCH}                  \
@@ -94,9 +100,6 @@ jobs:
             fi
 
             exit $?
-
-
-
 
 workflows:
   test_everything:
