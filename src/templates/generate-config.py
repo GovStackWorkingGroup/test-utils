@@ -46,10 +46,39 @@ def load_circle_config(application_path):
     """
     Loads custom CircleCI configuration from 'circle_config.yml' if available.
     """
+    def validate_steps(steps):
+        if not isinstance(steps, list):
+            print(F"Custom schema for `{application_path}` invalid, `steps` have to be in list format")
+            return False
+        for step in steps:
+            if not isinstance(step, dict) or 'run' not in step:
+                print(F"Custom schema for `{application_path}` invalid, `steps` items have provide `run` key")
+                return False
+            run = step['run']
+        return True
+
+    def validate(data): 
+        if 'before' in data:
+            if not isinstance(data['before'], dict) or 'steps' not in data['before']:
+                print(F"Custom schema for `{application_path}` invalid, `before` has to provide `steps`.")
+                return False
+            if not validate_steps(data['before']['steps']):
+                return False
+
+        if 'after' in data:
+            if not isinstance(data['after'], dict) or 'steps' not in data['after']:
+                print(F"Custom schema for `{application_path}` invalid, `after` has to provide `steps`.")
+                return False
+            if not validate_steps(data['after']['steps']):
+                return False
+        return True
+
     config_path = os.path.join(application_path, 'circle_config.yml')
     if os.path.isfile(config_path):
         with open(config_path, 'r') as file:
-            return yaml.safe_load(file)
+            custom_commands =  yaml.safe_load(file)
+            if validate(custom_commands):
+                return custom_commands
     return None
 
 def get_git_tags():
@@ -150,5 +179,7 @@ with open(base_config) as f:
     available_versions.append(main_branch)
     circle_config['workflows']['test_everything']['jobs'] = list_test_executions(available_examples, available_versions)
     circle_config = append_custom_yamls(circle_config, available_examples)
+    yaml_content = yaml.dump(circle_config, default_flow_style=False)
+    print(yaml_content)
     with open(generated_config, "w") as w: 
       yaml.dump(circle_config, w, default_flow_style=False)
