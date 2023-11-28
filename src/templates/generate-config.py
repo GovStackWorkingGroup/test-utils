@@ -31,6 +31,56 @@ def is_valid(test_harness_path):
       return False 
   return True 
 
+def extends_config(application_path): 
+  """
+  Checks if application under testing provides optional custom circleci yaml extension `circle_config.yml`. 
+  """
+  if not os.path.isdir(application_path):
+        return False
+
+  elements = [os.path.basename(name) for name in os.listdir(application_path)]
+  has_config = ('circle_config.yml' in elements)
+  return has_config 
+
+def load_circle_config(application_path):
+    """
+    Loads custom CircleCI configuration from 'circle_config.yml' if available.
+    """
+    def validate_steps(steps):
+        if not isinstance(steps, list):
+            print(F"Custom schema for `{application_path}` invalid, `steps` have to be in list format")
+            return False
+        for step in steps:
+            if not isinstance(step, dict) or 'run' not in step:
+                print(F"Custom schema for `{application_path}` invalid, `steps` items have provide `run` key")
+                return False
+            run = step['run']
+        return True
+
+    def validate(data): 
+        if 'before' in data:
+            if not isinstance(data['before'], dict) or 'steps' not in data['before']:
+                print(F"Custom schema for `{application_path}` invalid, `before` has to provide `steps`.")
+                return False
+            if not validate_steps(data['before']['steps']):
+                return False
+
+        if 'after' in data:
+            if not isinstance(data['after'], dict) or 'steps' not in data['after']:
+                print(F"Custom schema for `{application_path}` invalid, `after` has to provide `steps`.")
+                return False
+            if not validate_steps(data['after']['steps']):
+                return False
+        return True
+
+    config_path = os.path.join(application_path, 'circle_config.yml')
+    if os.path.isfile(config_path):
+        with open(config_path, 'r') as file:
+            custom_commands =  yaml.safe_load(file)
+            if validate(custom_commands):
+                return custom_commands
+    return None
+
 def get_git_tags():
   regex = "v(0|([1-9][0-9]*)\.(0|([1-9][0-9]*))\.(0|[1-9][0-9]*))|latest"
   tags = subprocess.getoutput(f"git tag -l | grep -E -w '{regex}'")
@@ -48,6 +98,52 @@ def app_and_name_from_path(test_harness_path):
   test_path = str(pathlib.Path(test_harness_path).absolute())
   test_name = str(os.path.basename(test_path))  
   return test_path, test_name
+
+
+def wrap_with_condition(steps, app_name):
+    """
+    Returns a list of conditional steps specific to the given app name.
+    """
+    # Wrap the steps in a 'when' condition
+    return {
+        "when": {
+            "condition": {
+                "equal": ["<< parameters.example-app-name >>", app_name]
+            },
+            "steps": steps['steps']
+        }
+    }
+
+def merge_with_custom_steps(circle_config, custom_config, app_name):
+    """
+    Inserts conditional custom steps into the test execution steps.
+    """
+    before_steps = custom_config.get('before', [])
+    after_steps = custom_config.get('after', [])
+
+    # Insert 'before' conditional steps after 'checkout'
+    if before_steps:
+        conditional_before_steps = wrap_with_condition(before_steps, app_name)
+        circle_config['jobs']['test-example']['steps'].insert(1, conditional_before_steps)  # After 'checkout'
+
+    # Append 'after' conditional steps at the end
+    if after_steps:
+        conditional_after_steps = wrap_with_condition(after_steps, app_name)
+        circle_config['jobs']['test-example']['steps'].append(conditional_after_steps)
+
+    return circle_config
+
+def append_custom_yamls(circle_config, example_apps): 
+    for app in example_apps:
+        app_path, app_name = app_and_name_from_path(app)
+        if not extends_config(app_path):
+          print(F'Software under {app_path} doesn\'t provide custom CircleCI steps.')
+          continue
+
+        custom_config = load_circle_config(app_path)
+        if custom_config:
+            circle_config = merge_with_custom_steps(circle_config, custom_config, app_name)
+    return circle_config
 
 def list_test_executions(example_apps, versions): 
     test_executions = []
@@ -82,6 +178,8 @@ with open(base_config) as f:
     available_versions = get_git_tags()
     available_versions.append(main_branch)
     circle_config['workflows']['test_everything']['jobs'] = list_test_executions(available_examples, available_versions)
-
+    circle_config = append_custom_yamls(circle_config, available_examples)
+    yaml_content = yaml.dump(circle_config, default_flow_style=False)
+    print(yaml_content)
     with open(generated_config, "w") as w: 
       yaml.dump(circle_config, w, default_flow_style=False)
